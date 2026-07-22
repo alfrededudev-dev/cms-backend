@@ -6,7 +6,13 @@ import type { Db } from "../db/index.js"
 import type { Env } from "../env.js"
 import { ensureComponentPreviewWorkspace } from "./component-preview-workspace.js"
 import { killDevProcessTree } from "./process-tree.js"
-import { getComponentDevUrl, resolveComponentPreviewDir } from "./paths.js"
+import {
+  getComponentPreviewBasePath,
+  getComponentPreviewInternalUrl,
+  getComponentPreviewPublicOrigin,
+  getComponentPreviewPublicUrl,
+  resolveComponentPreviewDir,
+} from "./paths.js"
 
 const execFileAsync = promisify(execFile)
 
@@ -18,6 +24,22 @@ let devError: string | null = null
 let activeEnv: Env | null = null
 let restartInFlight: Promise<{ status: DevStatus; url: string | null; error: string | null }> | null =
   null
+
+function getInternalProbeUrl(env: Env) {
+  return getComponentPreviewInternalUrl(
+    env.COMPONENT_PREVIEW_DEV_HOST,
+    env.COMPONENT_PREVIEW_DEV_PORT,
+    env.COMPONENT_PREVIEW_PUBLIC_URL,
+  )
+}
+
+function getPublicBaseUrl(env: Env) {
+  return getComponentPreviewPublicUrl(
+    env.COMPONENT_PREVIEW_DEV_HOST,
+    env.COMPONENT_PREVIEW_DEV_PORT,
+    env.COMPONENT_PREVIEW_PUBLIC_URL,
+  )
+}
 
 async function ensureNpmInstall(previewDir: string) {
   try {
@@ -85,9 +107,7 @@ async function waitForDevServer(url: string, timeoutMs = 90_000) {
 export function getComponentDevServerStatus() {
   return {
     status: devStatus,
-    url: activeEnv
-      ? getComponentDevUrl(activeEnv.COMPONENT_PREVIEW_DEV_HOST, activeEnv.COMPONENT_PREVIEW_DEV_PORT)
-      : null,
+    url: activeEnv ? getPublicBaseUrl(activeEnv) : null,
     error: devError,
   }
 }
@@ -120,40 +140,50 @@ export async function stopComponentDevServer() {
 
 export async function ensureComponentDevServer(env: Env, db: Db) {
   activeEnv = env
-  const url = getComponentDevUrl(env.COMPONENT_PREVIEW_DEV_HOST, env.COMPONENT_PREVIEW_DEV_PORT)
+  const internalUrl = getInternalProbeUrl(env)
+  const publicUrl = getPublicBaseUrl(env)
   const port = env.COMPONENT_PREVIEW_DEV_PORT
+  const basePath = getComponentPreviewBasePath(env.COMPONENT_PREVIEW_PUBLIC_URL)
+  const publicOrigin = getComponentPreviewPublicOrigin(env.COMPONENT_PREVIEW_PUBLIC_URL)
 
   if (devStatus === "running" && devProcess) {
-    return { ...getComponentDevServerStatus(), url }
+    return { ...getComponentDevServerStatus(), url: publicUrl }
   }
 
-  if (await isPreviewServerRunning(url)) {
+  if (await isPreviewServerRunning(internalUrl)) {
     devStatus = "running"
     devError = null
-    return { ...getComponentDevServerStatus(), url }
+    return { ...getComponentDevServerStatus(), url: publicUrl }
   }
 
   if (devStatus === "starting") {
-    await waitForDevServer(url)
+    await waitForDevServer(internalUrl)
     devStatus = "running"
-    return { ...getComponentDevServerStatus(), url }
+    return { ...getComponentDevServerStatus(), url: publicUrl }
   }
 
   await ensureComponentPreviewWorkspace(db, env)
   const previewDir = resolveComponentPreviewDir(env.COMPONENT_PREVIEW_DIR)
   await ensureNpmInstall(previewDir)
-  await clearStaleAstroDevLock(previewDir, url)
+  await clearStaleAstroDevLock(previewDir, internalUrl)
 
   devStatus = "starting"
   devError = null
 
-  devProcess = spawn("npm", ["run", "dev", "--", "--port", String(port), "--host"], {
+  const devArgs = ["run", "dev", "--", "--port", String(port), "--host"]
+  if (basePath !== "/") {
+    devArgs.push("--base", basePath)
+  }
+
+  devProcess = spawn("npm", devArgs, {
     cwd: previewDir,
     shell: true,
     windowsHide: true,
     stdio: "pipe",
     env: {
       ...process.env,
+      COMPONENT_PREVIEW_BASE: basePath,
+      ...(publicOrigin ? { COMPONENT_PREVIEW_ORIGIN: publicOrigin } : {}),
     },
   })
 
@@ -173,7 +203,7 @@ export async function ensureComponentDevServer(env: Env, db: Db) {
   })
 
   try {
-    await waitForDevServer(url)
+    await waitForDevServer(internalUrl)
     devStatus = "running"
     devError = null
   } catch (error) {
@@ -186,14 +216,14 @@ export async function ensureComponentDevServer(env: Env, db: Db) {
     throw error
   }
 
-  return { ...getComponentDevServerStatus(), url }
+  return { ...getComponentDevServerStatus(), url: publicUrl }
 }
 
 async function restartComponentDevServer(env: Env, db: Db) {
   activeEnv = env
-  const url = getComponentDevUrl(env.COMPONENT_PREVIEW_DEV_HOST, env.COMPONENT_PREVIEW_DEV_PORT)
+  const internalUrl = getInternalProbeUrl(env)
 
-  if (!(await isPreviewServerRunning(url)) && devStatus !== "running" && !devProcess) {
+  if (!(await isPreviewServerRunning(internalUrl)) && devStatus !== "running" && !devProcess) {
     return ensureComponentDevServer(env, db)
   }
 
@@ -219,6 +249,6 @@ export function buildComponentPreviewUrl(
   componentSlug: string,
   variantSlug: string,
 ) {
-  const baseUrl = getComponentDevUrl(env.COMPONENT_PREVIEW_DEV_HOST, env.COMPONENT_PREVIEW_DEV_PORT)
+  const baseUrl = getPublicBaseUrl(env)
   return `${baseUrl}/preview/${encodeURIComponent(componentSlug)}/${encodeURIComponent(variantSlug)}`
 }

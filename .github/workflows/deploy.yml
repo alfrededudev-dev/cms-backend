@@ -61,6 +61,14 @@ jobs:
             fi
 
             echo "Deploying backend branch=${BRANCH} -> ${APP_DIR}"
+
+            if [ ! -d "${APP_DIR}/.git" ]; then
+              echo "Backend repo missing at ${APP_DIR}, cloning..."
+              mkdir -p "$(dirname "${APP_DIR}")"
+              CLONE_URL="$(git -C /root/martin/custom_cms/staging/cms-backend remote get-url origin)"
+              git clone "${CLONE_URL}" "${APP_DIR}"
+            fi
+
             cd "${APP_DIR}"
             git fetch origin "${BRANCH}"
             git checkout "${BRANCH}"

@@ -95,7 +95,10 @@ export const componentsRoutes = new Hono<AppBindings>()
 
     return c.json({
       ...status,
-      url: status.url ?? `http://${env.COMPONENT_PREVIEW_DEV_HOST}:${env.COMPONENT_PREVIEW_DEV_PORT}`,
+      url:
+        status.url ??
+        (env.COMPONENT_PREVIEW_PUBLIC_URL?.trim().replace(/\/$/, "") ||
+          `http://${env.COMPONENT_PREVIEW_DEV_HOST}:${env.COMPONENT_PREVIEW_DEV_PORT}`),
     })
   })
   .post("/dev/start", async (c) => {

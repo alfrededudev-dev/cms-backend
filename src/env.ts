@@ -19,6 +19,8 @@ const envSchema = z.object({
   COMPONENT_PREVIEW_DIR: z.string().default("../workspaces/component-preview"),
   COMPONENT_PREVIEW_DEV_PORT: z.coerce.number().default(4322),
   COMPONENT_PREVIEW_DEV_HOST: z.string().default("localhost"),
+  /** Browser-facing HTTPS origin/path for preview iframe (e.g. https://cms.example.com/__component-preview). */
+  COMPONENT_PREVIEW_PUBLIC_URL: z.string().optional(),
   ASTRO_STARTER_DIR: z.string().default("../astro-starter"),
   COMPONENT_PREVIEW_ASSETS_DIR: z.string().default("../component-preview-assets"),
   SITE_DEV_PORT_BASE: z.coerce.number().default(4500),
