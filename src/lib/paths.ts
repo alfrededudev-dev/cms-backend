@@ -68,3 +68,57 @@ export function getComponentDevUrl(host: string, port: number) {
   return `http://${host}:${port}`
 }
 
+/** Path prefix for Astro `base` when preview is reverse-proxied under a subpath. */
+export function getComponentPreviewBasePath(publicUrl: string | undefined) {
+  const raw = publicUrl?.trim()
+  if (!raw) {
+    return "/"
+  }
+
+  try {
+    const pathname = new URL(raw).pathname
+    if (!pathname || pathname === "/") {
+      return "/"
+    }
+
+    return pathname.endsWith("/") ? pathname : `${pathname}/`
+  } catch {
+    return "/"
+  }
+}
+
+/** Origin only (scheme + host), used for Vite HMR behind HTTPS proxy. */
+export function getComponentPreviewPublicOrigin(publicUrl: string | undefined) {
+  const raw = publicUrl?.trim()
+  if (!raw) {
+    return null
+  }
+
+  try {
+    return new URL(raw).origin
+  } catch {
+    return null
+  }
+}
+
+/** URL the API uses to probe whether Astro is up (always host:port on the server). */
+export function getComponentPreviewInternalUrl(host: string, port: number, publicUrl?: string) {
+  const root = getComponentDevUrl(host, port)
+  const base = getComponentPreviewBasePath(publicUrl)
+  if (base === "/") {
+    return root
+  }
+
+  return `${root}${base.replace(/\/$/, "")}`
+}
+
+/** URL the browser/iframe should use (HTTPS public URL when configured). */
+export function getComponentPreviewPublicUrl(host: string, port: number, publicUrl?: string) {
+  const raw = publicUrl?.trim().replace(/\/$/, "")
+  if (raw) {
+    return raw
+  }
+
+  return getComponentDevUrl(host, port)
+}
+
