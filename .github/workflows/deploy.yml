@@ -1,0 +1,80 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+      - staging
+
+concurrency:
+  group: backend-deploy-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy backend via SSH
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -euo pipefail
+
+            export PATH="/usr/local/bin:/usr/bin:$PATH"
+            if [ -s "$HOME/.nvm/nvm.sh" ]; then
+              # shellcheck disable=SC1091
+              . "$HOME/.nvm/nvm.sh"
+            fi
+            if [ -d /root/.nvm/versions/node ]; then
+              LATEST_NODE="$(ls -1 /root/.nvm/versions/node | tail -n 1)"
+              export PATH="/root/.nvm/versions/node/${LATEST_NODE}/bin:$PATH"
+            fi
+            export PATH="$HOME/.local/share/fnm/current/bin:/usr/local/node/bin:$PATH"
+
+            command -v npm >/dev/null 2>&1 || {
+              echo "npm not found in PATH=$PATH"
+              echo "Run on server: which npm; type npm; echo \$PATH"
+              exit 127
+            }
+            command -v node >/dev/null 2>&1 || {
+              echo "node not found"
+              exit 127
+            }
+            # pm2 often lives next to npm when installed globally via npm
+            command -v pm2 >/dev/null 2>&1 || {
+              echo "pm2 not found in PATH=$PATH"
+              exit 127
+            }
+            echo "Using node=$(command -v node) ($(node -v)) npm=$(command -v npm) pm2=$(command -v pm2)"
+
+            if [ "${{ github.ref_name }}" = "main" ]; then
+              APP_DIR="/root/martin/custom_cms/production/cms-backend"
+              PM2_NAME="cms-api-prod"
+              BRANCH="main"
+            else
+              APP_DIR="/root/martin/custom_cms/staging/cms-backend"
+              PM2_NAME="cms-api-staging"
+              BRANCH="staging"
+            fi
+
+            echo "Deploying backend branch=${BRANCH} -> ${APP_DIR}"
+            cd "${APP_DIR}"
+            git fetch origin "${BRANCH}"
+            git checkout "${BRANCH}"
+            git reset --hard "origin/${BRANCH}"
+
+            npm ci
+            npm run build
+            npm run db:migrate
+
+            if pm2 describe "${PM2_NAME}" >/dev/null 2>&1; then
+              pm2 restart "${PM2_NAME}" --update-env
+            else
+              pm2 start dist/index.js --name "${PM2_NAME}"
+            fi
+            pm2 save
+
+            echo "Backend deploy done: ${BRANCH} (${PM2_NAME})"
