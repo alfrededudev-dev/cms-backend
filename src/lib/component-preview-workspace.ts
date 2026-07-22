@@ -1,0 +1,302 @@
+import fs from "node:fs/promises"
+import path from "node:path"
+import type { Db } from "../db/index.js"
+import { getAppSettings } from "../db/settings.js"
+import type { Env } from "../env.js"
+import { cloneGitRepository } from "./git.js"
+import {
+  buildComponentPreviewThemeCss,
+  buildComponentPreviewThemePayload,
+} from "./site-theme-sync.js"
+import { DEFAULT_CONTACT_FORM_FIELDS } from "./site-form-defaults.js"
+import {
+  getComponentBlocksDir,
+  resolveAstroStarterDir,
+  resolveComponentPreviewAssetsDir,
+  resolveComponentPreviewDir,
+} from "./paths.js"
+
+const STARTER_COPY_SKIP = new Set(["node_modules", ".git", "dist", ".astro"])
+const LEGACY_COMPONENT_LIBRARY_DIR = "../component-library"
+
+let ensureWorkspaceInFlight: Promise<string> | null = null
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function isBusyError(error: unknown) {
+  return (
+    error instanceof Error &&
+    ("code" in error
+      ? error.code === "EBUSY" || error.code === "EPERM" || error.code === "EACCES"
+      : /EBUSY|EPERM|EACCES|resource busy|locked/i.test(error.message))
+  )
+}
+
+async function pathExists(targetPath: string) {
+  try {
+    await fs.access(targetPath)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function copyStarterDirectory(sourceDir: string, targetDir: string) {
+  await fs.mkdir(targetDir, { recursive: true })
+  const entries = await fs.readdir(sourceDir, { withFileTypes: true })
+
+  for (const entry of entries) {
+    if (STARTER_COPY_SKIP.has(entry.name)) {
+      continue
+    }
+
+    await fs.cp(path.join(sourceDir, entry.name), path.join(targetDir, entry.name), {
+      recursive: true,
+    })
+  }
+}
+
+async function readFileIfExists(targetPath: string) {
+  try {
+    return await fs.readFile(targetPath)
+  } catch {
+    return null
+  }
+}
+
+async function copyFileIfChanged(src: string, dest: string) {
+  const srcContent = await fs.readFile(src)
+  const destContent = await readFileIfExists(dest)
+
+  if (destContent && srcContent.equals(destContent)) {
+    return
+  }
+
+  await fs.mkdir(path.dirname(dest), { recursive: true })
+
+  const maxAttempts = 5
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const tempPath = `${dest}.${process.pid}.${Date.now()}.tmp`
+
+    try {
+      await fs.writeFile(tempPath, srcContent)
+
+      try {
+        await fs.rename(tempPath, dest)
+      } catch (error) {
+        await fs.unlink(tempPath).catch(() => {})
+        throw error
+      }
+
+      return
+    } catch (error) {
+      await fs.unlink(tempPath).catch(() => {})
+
+      if (isBusyError(error) && attempt < maxAttempts) {
+        await sleep(50 * attempt)
+        continue
+      }
+
+      throw error
+    }
+  }
+}
+
+async function syncComponentPreviewAssets(env: Env) {
+  const assetsDir = resolveComponentPreviewAssetsDir(env.COMPONENT_PREVIEW_ASSETS_DIR)
+  const previewDir = resolveComponentPreviewDir(env.COMPONENT_PREVIEW_DIR)
+  const filesToSync = [
+    {
+      src: path.join(assetsDir, "src", "lib", "component-preview.ts"),
+      dest: path.join(previewDir, "src", "lib", "component-preview.ts"),
+    },
+    {
+      src: path.join(assetsDir, "src", "pages", "preview", "[component]", "[variant].astro"),
+      dest: path.join(previewDir, "src", "pages", "preview", "[component]", "[variant].astro"),
+    },
+    {
+      src: path.join(assetsDir, "astro.config.mjs"),
+      dest: path.join(previewDir, "astro.config.mjs"),
+    },
+  ]
+
+  const starterDir = resolveAstroStarterDir(env.ASTRO_STARTER_DIR)
+  const previewThemePayload = buildComponentPreviewThemePayload()
+  const themeFiles = [
+    {
+      src: path.join(starterDir, "src", "cms", "theme.css"),
+      dest: path.join(previewDir, "src", "cms", "theme.css"),
+      fallback: buildComponentPreviewThemeCss(),
+    },
+    {
+      content: `${JSON.stringify(previewThemePayload, null, 2)}\n`,
+      dest: path.join(previewDir, "src", "cms", "theme.json"),
+    },
+  ]
+  const sharedComponentFiles = [
+    {
+      src: path.join(starterDir, "src", "styles", "global.css"),
+      dest: path.join(previewDir, "src", "styles", "global.css"),
+    },
+    {
+      src: path.join(starterDir, "src", "components", "FormField.astro"),
+      dest: path.join(previewDir, "src", "components", "FormField.astro"),
+    },
+    {
+      src: path.join(starterDir, "src", "components", "CmsRichText.astro"),
+      dest: path.join(previewDir, "src", "components", "CmsRichText.astro"),
+    },
+    {
+      src: path.join(starterDir, "src", "components", "CmsFormShell.astro"),
+      dest: path.join(previewDir, "src", "components", "CmsFormShell.astro"),
+    },
+    {
+      src: path.join(starterDir, "src", "components", "CmsFormField.astro"),
+      dest: path.join(previewDir, "src", "components", "CmsFormField.astro"),
+    },
+    {
+      src: path.join(starterDir, "src", "components", "cms-form-schema.ts"),
+      dest: path.join(previewDir, "src", "components", "cms-form-schema.ts"),
+    },
+    {
+      src: path.join(starterDir, "src", "components", "cms-form.js"),
+      dest: path.join(previewDir, "src", "components", "cms-form.js"),
+    },
+  ]
+
+  const previewFormStub = {
+    slug: "contact",
+    name: "Contact",
+    description: "Preview stub — real submit URL is generated on the site workspace.",
+    fieldsSchema: DEFAULT_CONTACT_FORM_FIELDS,
+    settings: {
+      successMessage: "Thank you! Your message has been sent.",
+      redirectUrl: "",
+    },
+    submitPath: "",
+    submitUrl: "",
+  }
+  const previewFormFiles = [
+    {
+      content: `${JSON.stringify(previewFormStub, null, 2)}\n`,
+      dest: path.join(previewDir, "src", "data", "forms", "contact.json"),
+    },
+  ]
+
+  for (const file of [...filesToSync, ...themeFiles, ...sharedComponentFiles, ...previewFormFiles]) {
+    if ("content" in file) {
+      await writeFileIfChanged(file.dest, file.content)
+      continue
+    }
+
+    const src = file.src
+    const fallback = "fallback" in file ? file.fallback : undefined
+
+    if (!(await pathExists(src))) {
+      if (typeof fallback === "string") {
+        await writeFileIfChanged(file.dest, fallback)
+        continue
+      }
+
+      throw new Error(`Component preview asset is missing: ${src}`)
+    }
+
+    await copyFileIfChanged(src, file.dest)
+  }
+}
+
+async function writeFileIfChanged(dest: string, content: string) {
+  const destContent = await readFileIfExists(dest)
+
+  if (destContent && destContent.toString("utf8") === content) {
+    return
+  }
+
+  await fs.mkdir(path.dirname(dest), { recursive: true })
+  await fs.writeFile(dest, content, "utf8")
+}
+
+async function migrateLegacyBlocksIfNeeded(env: Env) {
+  const legacyBlocksDir = getComponentBlocksDir(LEGACY_COMPONENT_LIBRARY_DIR)
+  const previewBlocksDir = getComponentBlocksDir(env.COMPONENT_PREVIEW_DIR)
+
+  if (!(await pathExists(legacyBlocksDir))) {
+    return
+  }
+
+  const legacyEntries = await fs.readdir(legacyBlocksDir)
+  const hasLegacyBlocks = legacyEntries.some((entry) => entry !== ".gitkeep")
+
+  if (!hasLegacyBlocks) {
+    return
+  }
+
+  let previewEntries: string[] = []
+
+  try {
+    previewEntries = await fs.readdir(previewBlocksDir)
+  } catch {
+    previewEntries = []
+  }
+
+  const hasPreviewBlocks = previewEntries.some((entry) => entry !== ".gitkeep")
+
+  if (hasPreviewBlocks) {
+    return
+  }
+
+  await fs.mkdir(previewBlocksDir, { recursive: true })
+  await fs.cp(legacyBlocksDir, previewBlocksDir, { recursive: true, force: true })
+}
+
+export async function ensureComponentPreviewWorkspace(db: Db, env: Env) {
+  if (ensureWorkspaceInFlight) {
+    return ensureWorkspaceInFlight
+  }
+
+  ensureWorkspaceInFlight = ensureComponentPreviewWorkspaceInner(db, env).finally(() => {
+    ensureWorkspaceInFlight = null
+  })
+
+  return ensureWorkspaceInFlight
+}
+
+async function ensureComponentPreviewWorkspaceInner(db: Db, env: Env) {
+  const previewDir = resolveComponentPreviewDir(env.COMPONENT_PREVIEW_DIR)
+  const hasWorkspace = await pathExists(path.join(previewDir, "package.json"))
+
+  if (!hasWorkspace) {
+    const localStarterDir = resolveAstroStarterDir(env.ASTRO_STARTER_DIR)
+    let seededFromLocal = false
+
+    if (await pathExists(path.join(localStarterDir, "package.json"))) {
+      await copyStarterDirectory(localStarterDir, previewDir)
+      seededFromLocal = true
+    }
+
+    if (!seededFromLocal) {
+      const settings = await getAppSettings(db)
+
+      if (!settings.starterGitUrl) {
+        throw new Error(
+          "Component preview workspace is missing. Configure starter git URL in Settings or set ASTRO_STARTER_DIR.",
+        )
+      }
+
+      await cloneGitRepository({
+        gitUrl: settings.starterGitUrl,
+        branch: settings.starterGitBranch,
+        targetPath: previewDir,
+      })
+    }
+  }
+
+  await fs.mkdir(getComponentBlocksDir(env.COMPONENT_PREVIEW_DIR), { recursive: true })
+  await syncComponentPreviewAssets(env)
+  await migrateLegacyBlocksIfNeeded(env)
+
+  return previewDir
+}

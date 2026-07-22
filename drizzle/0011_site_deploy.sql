@@ -1,0 +1,11 @@
+ALTER TABLE "sites" ADD COLUMN "ftp_host" text;
+ALTER TABLE "sites" ADD COLUMN "ftp_port" integer DEFAULT 21 NOT NULL;
+ALTER TABLE "sites" ADD COLUMN "ftp_username" text;
+ALTER TABLE "sites" ADD COLUMN "ftp_password" text;
+ALTER TABLE "sites" ADD COLUMN "ftp_remote_path" text;
+ALTER TABLE "sites" ADD COLUMN "ftp_secure" boolean DEFAULT false NOT NULL;
+ALTER TABLE "sites" ADD COLUMN "ssh_host" text;
+ALTER TABLE "sites" ADD COLUMN "ssh_port" integer DEFAULT 22 NOT NULL;
+ALTER TABLE "sites" ADD COLUMN "ssh_username" text;
+ALTER TABLE "sites" ADD COLUMN "ssh_password" text;
+ALTER TABLE "sites" ADD COLUMN "ssh_remote_path" text;

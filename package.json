@@ -1,0 +1,36 @@
+{
+  "name": "cms-backend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:stop": "node scripts/stop-dev.mjs",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:seed": "tsx src/db/run-seed.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.14.4",
+    "@hono/zod-validator": "^0.7.0",
+    "basic-ftp": "^6.0.1",
+    "bcryptjs": "^3.0.2",
+    "dotenv": "^16.6.1",
+    "drizzle-orm": "^0.44.2",
+    "hono": "^4.8.3",
+    "jose": "^6.0.11",
+    "nodemailer": "^9.0.3",
+    "postgres": "^3.4.7",
+    "zod": "^3.25.67"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^24.13.2",
+    "@types/nodemailer": "^8.0.1",
+    "drizzle-kit": "^0.31.4",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  }
+}

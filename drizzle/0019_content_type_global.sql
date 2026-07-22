@@ -1,0 +1,2 @@
+-- Global content type: site-wide settings (phones, social links, etc.) available on all pages.
+-- No schema change required — kind is stored as text; application accepts "global".

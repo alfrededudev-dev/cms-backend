@@ -1,0 +1,224 @@
+import { execFile, spawn, type ChildProcess } from "node:child_process"
+import fs from "node:fs/promises"
+import path from "node:path"
+import { promisify } from "node:util"
+import type { Db } from "../db/index.js"
+import type { Env } from "../env.js"
+import { ensureComponentPreviewWorkspace } from "./component-preview-workspace.js"
+import { killDevProcessTree } from "./process-tree.js"
+import { getComponentDevUrl, resolveComponentPreviewDir } from "./paths.js"
+
+const execFileAsync = promisify(execFile)
+
+type DevStatus = "stopped" | "starting" | "running" | "failed"
+
+let devProcess: ChildProcess | null = null
+let devStatus: DevStatus = "stopped"
+let devError: string | null = null
+let activeEnv: Env | null = null
+let restartInFlight: Promise<{ status: DevStatus; url: string | null; error: string | null }> | null =
+  null
+
+async function ensureNpmInstall(previewDir: string) {
+  try {
+    await fs.access(path.join(previewDir, "node_modules"))
+  } catch {
+    await execFileAsync("npm", ["install"], {
+      cwd: previewDir,
+      shell: true,
+      windowsHide: true,
+    })
+  }
+}
+
+async function isPreviewServerRunning(url: string) {
+  try {
+    const response = await fetch(url, { method: "GET" })
+    return response.ok || response.status === 404
+  } catch {
+    return false
+  }
+}
+
+async function clearStaleAstroDevLock(previewDir: string, url: string) {
+  if (await isPreviewServerRunning(url)) {
+    return
+  }
+
+  const devJsonPath = path.join(previewDir, ".astro", "dev.json")
+
+  try {
+    await fs.access(devJsonPath)
+  } catch {
+    return
+  }
+
+  try {
+    await execFileAsync("npx", ["astro", "dev", "stop"], {
+      cwd: previewDir,
+      shell: true,
+      windowsHide: true,
+    })
+  } catch {
+    try {
+      await fs.unlink(devJsonPath)
+    } catch {
+      // ignore
+    }
+  }
+}
+
+async function waitForDevServer(url: string, timeoutMs = 90_000) {
+  const startedAt = Date.now()
+
+  while (Date.now() - startedAt < timeoutMs) {
+    if (await isPreviewServerRunning(url)) {
+      return
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+
+  throw new Error("Component preview dev server failed to start in time")
+}
+
+export function getComponentDevServerStatus() {
+  return {
+    status: devStatus,
+    url: activeEnv
+      ? getComponentDevUrl(activeEnv.COMPONENT_PREVIEW_DEV_HOST, activeEnv.COMPONENT_PREVIEW_DEV_PORT)
+      : null,
+    error: devError,
+  }
+}
+
+export async function stopComponentDevServer() {
+  if (devProcess) {
+    await killDevProcessTree(devProcess)
+    devProcess = null
+  }
+
+  if (activeEnv) {
+    const previewDir = resolveComponentPreviewDir(activeEnv.COMPONENT_PREVIEW_DIR)
+
+    try {
+      await execFileAsync("npx", ["astro", "dev", "stop"], {
+        cwd: previewDir,
+        shell: true,
+        windowsHide: true,
+      })
+    } catch {
+      // ignore
+    }
+  }
+
+  devStatus = "stopped"
+  devError = null
+
+  return getComponentDevServerStatus()
+}
+
+export async function ensureComponentDevServer(env: Env, db: Db) {
+  activeEnv = env
+  const url = getComponentDevUrl(env.COMPONENT_PREVIEW_DEV_HOST, env.COMPONENT_PREVIEW_DEV_PORT)
+  const port = env.COMPONENT_PREVIEW_DEV_PORT
+
+  if (devStatus === "running" && devProcess) {
+    return { ...getComponentDevServerStatus(), url }
+  }
+
+  if (await isPreviewServerRunning(url)) {
+    devStatus = "running"
+    devError = null
+    return { ...getComponentDevServerStatus(), url }
+  }
+
+  if (devStatus === "starting") {
+    await waitForDevServer(url)
+    devStatus = "running"
+    return { ...getComponentDevServerStatus(), url }
+  }
+
+  await ensureComponentPreviewWorkspace(db, env)
+  const previewDir = resolveComponentPreviewDir(env.COMPONENT_PREVIEW_DIR)
+  await ensureNpmInstall(previewDir)
+  await clearStaleAstroDevLock(previewDir, url)
+
+  devStatus = "starting"
+  devError = null
+
+  devProcess = spawn("npm", ["run", "dev", "--", "--port", String(port), "--host"], {
+    cwd: previewDir,
+    shell: true,
+    windowsHide: true,
+    stdio: "pipe",
+    env: {
+      ...process.env,
+    },
+  })
+
+  devProcess.on("exit", (code) => {
+    if (devStatus !== "stopped") {
+      devStatus = "failed"
+      devError = `Dev server exited with code ${code ?? "unknown"}`
+    }
+    devProcess = null
+  })
+
+  devProcess.stderr?.on("data", (chunk: Buffer) => {
+    const message = chunk.toString()
+    if (message.toLowerCase().includes("error")) {
+      devError = message.trim()
+    }
+  })
+
+  try {
+    await waitForDevServer(url)
+    devStatus = "running"
+    devError = null
+  } catch (error) {
+    devStatus = "failed"
+    devError = error instanceof Error ? error.message : "Failed to start dev server"
+    if (devProcess) {
+      await killDevProcessTree(devProcess)
+    }
+    devProcess = null
+    throw error
+  }
+
+  return { ...getComponentDevServerStatus(), url }
+}
+
+async function restartComponentDevServer(env: Env, db: Db) {
+  activeEnv = env
+  const url = getComponentDevUrl(env.COMPONENT_PREVIEW_DEV_HOST, env.COMPONENT_PREVIEW_DEV_PORT)
+
+  if (!(await isPreviewServerRunning(url)) && devStatus !== "running" && !devProcess) {
+    return ensureComponentDevServer(env, db)
+  }
+
+  await stopComponentDevServer()
+  await new Promise((resolve) => setTimeout(resolve, 800))
+  return ensureComponentDevServer(env, db)
+}
+
+export async function restartComponentDevServerIfRunning(env: Env, db: Db) {
+  if (restartInFlight) {
+    return restartInFlight
+  }
+
+  restartInFlight = restartComponentDevServer(env, db).finally(() => {
+    restartInFlight = null
+  })
+
+  return restartInFlight
+}
+
+export function buildComponentPreviewUrl(
+  env: Env,
+  componentSlug: string,
+  variantSlug: string,
+) {
+  const baseUrl = getComponentDevUrl(env.COMPONENT_PREVIEW_DEV_HOST, env.COMPONENT_PREVIEW_DEV_PORT)
+  return `${baseUrl}/preview/${encodeURIComponent(componentSlug)}/${encodeURIComponent(variantSlug)}`
+}
