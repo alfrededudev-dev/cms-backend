@@ -52,6 +52,13 @@
       "breakpoints": true
     },
     {
+      "idx": 7,
+      "version": "7",
+      "when": 1783018000000,
+      "tag": "0007_site_page_type",
+      "breakpoints": true
+    },
+    {
       "idx": 8,
       "version": "7",
       "when": 1783019000000,
@@ -115,6 +122,13 @@
       "breakpoints": true
     },
     {
+      "idx": 17,
+      "version": "7",
+      "when": 1783028000000,
+      "tag": "0017_site_layout_blocks",
+      "breakpoints": true
+    },
+    {
       "idx": 18,
       "version": "7",
       "when": 1783029000000,
@@ -124,12 +138,19 @@
     {
       "idx": 19,
       "version": "7",
+      "when": 1783029500000,
+      "tag": "0019_content_type_global",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
       "when": 1783030000000,
       "tag": "0020_site_forms",
       "breakpoints": true
     },
     {
-      "idx": 20,
+      "idx": 21,
       "version": "7",
       "when": 1783031000000,
       "tag": "0021_block_theme_color_map",
@@ -138,19 +159,26 @@
     {
       "idx": 22,
       "version": "7",
+      "when": 1783032000000,
+      "tag": "0022_site_smtp",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
       "when": 1783033000000,
       "tag": "0023_block_collection_entry_loop",
       "breakpoints": true
     },
     {
-      "idx": 23,
+      "idx": 24,
       "version": "7",
       "when": 1783034000000,
       "tag": "0024_site_pages_slug_page_type_unique",
       "breakpoints": true
     },
     {
-      "idx": 24,
+      "idx": 25,
       "version": "7",
       "when": 1783035000000,
       "tag": "0025_site_layouts",
