@@ -7,6 +7,7 @@ import type { Env } from "../env.js"
 import { ensureComponentPreviewWorkspace } from "./component-preview-workspace.js"
 import { killDevProcessTree } from "./process-tree.js"
 import {
+  getComponentPreviewAllowedHosts,
   getComponentPreviewBasePath,
   getComponentPreviewInternalUrl,
   getComponentPreviewPublicUrl,
@@ -144,7 +145,12 @@ export async function ensureComponentDevServer(env: Env, db: Db) {
   const port = env.COMPONENT_PREVIEW_DEV_PORT
   const basePath = getComponentPreviewBasePath(env.COMPONENT_PREVIEW_PUBLIC_URL)
   const publicUrlForAstro = env.COMPONENT_PREVIEW_PUBLIC_URL?.trim().replace(/\/$/, "") || ""
-  const allowedHosts = env.COMPONENT_PREVIEW_ALLOWED_HOSTS?.trim() || ""
+  const allowedHostsConfig = getComponentPreviewAllowedHosts(
+    env.COMPONENT_PREVIEW_PUBLIC_URL,
+    env.COMPONENT_PREVIEW_ALLOWED_HOSTS,
+  )
+  const allowedHostsEnvValue =
+    allowedHostsConfig === true ? "true" : allowedHostsConfig.join(",")
 
   if (devStatus === "running" && devProcess) {
     return { ...getComponentDevServerStatus(), url: publicUrl }
@@ -174,6 +180,12 @@ export async function ensureComponentDevServer(env: Env, db: Db) {
   if (basePath !== "/") {
     devArgs.push("--base", basePath)
   }
+  // Astro CLI / Vite 6: config alone is flaky behind reverse proxies
+  if (allowedHostsConfig === true) {
+    devArgs.push("--allowed-hosts", "true")
+  } else if (allowedHostsConfig.length > 0) {
+    devArgs.push("--allowed-hosts", allowedHostsConfig.join(","))
+  }
 
   devProcess = spawn("npm", devArgs, {
     cwd: previewDir,
@@ -184,7 +196,13 @@ export async function ensureComponentDevServer(env: Env, db: Db) {
       ...process.env,
       COMPONENT_PREVIEW_BASE: basePath,
       ...(publicUrlForAstro ? { COMPONENT_PREVIEW_PUBLIC_URL: publicUrlForAstro } : {}),
-      ...(allowedHosts ? { COMPONENT_PREVIEW_ALLOWED_HOSTS: allowedHosts } : {}),
+      ...(allowedHostsEnvValue
+        ? {
+            COMPONENT_PREVIEW_ALLOWED_HOSTS: allowedHostsEnvValue,
+            // Vite-native escape hatch (works even when vite.server.allowedHosts in config is ignored)
+            __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: allowedHostsEnvValue,
+          }
+        : {}),
     },
   })
 
