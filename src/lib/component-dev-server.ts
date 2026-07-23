@@ -9,7 +9,6 @@ import { killDevProcessTree } from "./process-tree.js"
 import {
   getComponentPreviewBasePath,
   getComponentPreviewInternalUrl,
-  getComponentPreviewPublicOrigin,
   getComponentPreviewPublicUrl,
   resolveComponentPreviewDir,
 } from "./paths.js"
@@ -144,7 +143,7 @@ export async function ensureComponentDevServer(env: Env, db: Db) {
   const publicUrl = getPublicBaseUrl(env)
   const port = env.COMPONENT_PREVIEW_DEV_PORT
   const basePath = getComponentPreviewBasePath(env.COMPONENT_PREVIEW_PUBLIC_URL)
-  const publicOrigin = getComponentPreviewPublicOrigin(env.COMPONENT_PREVIEW_PUBLIC_URL)
+  const publicUrlForAstro = env.COMPONENT_PREVIEW_PUBLIC_URL?.trim().replace(/\/$/, "") || ""
 
   if (devStatus === "running" && devProcess) {
     return { ...getComponentDevServerStatus(), url: publicUrl }
@@ -183,7 +182,7 @@ export async function ensureComponentDevServer(env: Env, db: Db) {
     env: {
       ...process.env,
       COMPONENT_PREVIEW_BASE: basePath,
-      ...(publicOrigin ? { COMPONENT_PREVIEW_ORIGIN: publicOrigin } : {}),
+      ...(publicUrlForAstro ? { COMPONENT_PREVIEW_PUBLIC_URL: publicUrlForAstro } : {}),
     },
   })
 
