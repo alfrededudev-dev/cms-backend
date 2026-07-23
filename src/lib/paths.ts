@@ -146,7 +146,8 @@ export function getComponentPreviewInternalUrl(host: string, port: number, publi
     return root
   }
 
-  return `${root}${base.replace(/\/$/, "")}`
+  // Keep trailing slash — Astro with `base` often 404s the path without it.
+  return `${root}${base}`
 }
 
 /** URL the browser/iframe should use (HTTPS public URL when configured). */

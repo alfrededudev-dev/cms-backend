@@ -54,25 +54,15 @@ async function ensureNpmInstall(previewDir: string) {
 }
 
 /**
- * Require a real 2xx from the probe URL.
- * Accepting 404 was wrong: an old Astro without `base` still "answers" on the port,
- * while `/__component-preview` 404s — and we never restarted with the correct config.
+ * Require a real 2xx from the probe URL (includes base path when proxied).
+ * Do NOT accept 404: an old Astro without `base` can still bind the port while
+ * `/__component-preview/` 404s. Do NOT require `@vite` in HTML: with `hmr: false`
+ * the index may have no Vite client scripts, which caused endless wait → nginx 504.
  */
-async function isPreviewServerRunning(url: string, basePath = "/") {
+async function isPreviewServerRunning(url: string) {
   try {
-    const response = await fetch(url, { method: "GET" })
-    if (!response.ok) {
-      return false
-    }
-
-    if (basePath === "/") {
-      return true
-    }
-
-    const html = await response.text()
-    const basePrefix = basePath.replace(/\/$/, "")
-    // Confirm assets are prefixed with base (not bare /@vite/client at site root).
-    return html.includes(`${basePrefix}/@vite/`) || html.includes(`"${basePrefix}/`)
+    const response = await fetch(url, { method: "GET", redirect: "follow" })
+    return response.ok
   } catch {
     return false
   }
@@ -93,8 +83,8 @@ async function freePreviewPort(port: number) {
   }
 }
 
-async function clearStaleAstroDevLock(previewDir: string, url: string, basePath: string) {
-  if (await isPreviewServerRunning(url, basePath)) {
+async function clearStaleAstroDevLock(previewDir: string, url: string) {
+  if (await isPreviewServerRunning(url)) {
     return
   }
 
@@ -121,11 +111,11 @@ async function clearStaleAstroDevLock(previewDir: string, url: string, basePath:
   }
 }
 
-async function waitForDevServer(url: string, basePath: string, timeoutMs = 90_000) {
+async function waitForDevServer(url: string, timeoutMs = 90_000) {
   const startedAt = Date.now()
 
   while (Date.now() - startedAt < timeoutMs) {
-    if (await isPreviewServerRunning(url, basePath)) {
+    if (await isPreviewServerRunning(url)) {
       return
     }
 
@@ -187,20 +177,20 @@ export async function ensureComponentDevServer(env: Env, db: Db) {
     allowedHostsConfig === true ? "true" : allowedHostsConfig.join(",")
 
   if (devStatus === "running" && devProcess) {
-    if (await isPreviewServerRunning(internalUrl, basePath)) {
+    if (await isPreviewServerRunning(internalUrl)) {
       return { ...getComponentDevServerStatus(), url: publicUrl }
     }
     await stopComponentDevServer()
   }
 
-  if (await isPreviewServerRunning(internalUrl, basePath)) {
+  if (await isPreviewServerRunning(internalUrl)) {
     devStatus = "running"
     devError = null
     return { ...getComponentDevServerStatus(), url: publicUrl }
   }
 
   if (devStatus === "starting") {
-    await waitForDevServer(internalUrl, basePath)
+    await waitForDevServer(internalUrl)
     devStatus = "running"
     return { ...getComponentDevServerStatus(), url: publicUrl }
   }
@@ -208,7 +198,7 @@ export async function ensureComponentDevServer(env: Env, db: Db) {
   await ensureComponentPreviewWorkspace(db, env)
   const previewDir = resolveComponentPreviewDir(env.COMPONENT_PREVIEW_DIR)
   await ensureNpmInstall(previewDir)
-  await clearStaleAstroDevLock(previewDir, internalUrl, basePath)
+  await clearStaleAstroDevLock(previewDir, internalUrl)
   // Drop any stale Astro that answers the port but not the base path
   await freePreviewPort(port)
   await new Promise((resolve) => setTimeout(resolve, 400))
@@ -260,7 +250,7 @@ export async function ensureComponentDevServer(env: Env, db: Db) {
   })
 
   try {
-    await waitForDevServer(internalUrl, basePath)
+    await waitForDevServer(internalUrl)
     devStatus = "running"
     devError = null
   } catch (error) {
@@ -279,9 +269,8 @@ export async function ensureComponentDevServer(env: Env, db: Db) {
 async function restartComponentDevServer(env: Env, db: Db) {
   activeEnv = env
   const internalUrl = getInternalProbeUrl(env)
-  const basePath = getComponentPreviewBasePath(env.COMPONENT_PREVIEW_PUBLIC_URL)
 
-  if (!(await isPreviewServerRunning(internalUrl, basePath)) && devStatus !== "running" && !devProcess) {
+  if (!(await isPreviewServerRunning(internalUrl)) && devStatus !== "running" && !devProcess) {
     return ensureComponentDevServer(env, db)
   }
 
