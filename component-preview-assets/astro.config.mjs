@@ -4,7 +4,6 @@ import tailwindcss from "@tailwindcss/vite";
 
 const base = process.env.COMPONENT_PREVIEW_BASE || "/";
 const publicUrl = (process.env.COMPONENT_PREVIEW_PUBLIC_URL || "").replace(/\/$/, "");
-const isHttps = publicUrl.startsWith("https");
 
 /** @returns {true | string[] | undefined} */
 function resolveAllowedHosts() {
@@ -40,33 +39,12 @@ function resolveAllowedHosts() {
 	return [...hosts];
 }
 
-/** @returns {{ host: string, clientPort: number } | null} */
-function resolvePublicHost() {
-	if (!publicUrl) {
-		return null;
-	}
-
-	try {
-		const url = new URL(publicUrl);
-		const clientPort = url.port
-			? Number(url.port)
-			: url.protocol === "https:"
-				? 443
-				: 80;
-		return { host: url.hostname, clientPort };
-	} catch {
-		return null;
-	}
-}
-
 const allowedHosts = resolveAllowedHosts();
-const publicHost = resolvePublicHost();
-const hmrPath = base !== "/" ? base.replace(/\/$/, "") || "/" : undefined;
+const behindProxy = Boolean(publicUrl);
 
 // Behind https://host/__component-preview:
-// - `base` prefixes asset URLs
-// - HMR must use the public host + path (not wss://host/ or wss://localhost:port)
-// - do NOT set vite.server.origin to the bare hostname
+// - `base` must prefix ALL vite assets (/__component-preview/@vite/client)
+// - HMR is disabled remotely (WS through nginx/subpath is fragile; SSR preview is enough)
 export default defineConfig({
 	base,
 	devToolbar: {
@@ -86,16 +64,8 @@ export default defineConfig({
 		},
 		server: {
 			...(allowedHosts ? { allowedHosts } : {}),
-			...(publicHost
-				? {
-						hmr: {
-							protocol: isHttps ? "wss" : "ws",
-							host: publicHost.host,
-							clientPort: publicHost.clientPort,
-							...(hmrPath ? { path: hmrPath } : {}),
-						},
-					}
-				: {}),
+			// Remote CMS preview: no live reload needed; avoids wss://domain/?token= failures
+			...(behindProxy ? { hmr: false } : {}),
 		},
 	},
 });

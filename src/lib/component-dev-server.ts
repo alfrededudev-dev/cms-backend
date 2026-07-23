@@ -53,17 +53,48 @@ async function ensureNpmInstall(previewDir: string) {
   }
 }
 
-async function isPreviewServerRunning(url: string) {
+/**
+ * Require a real 2xx from the probe URL.
+ * Accepting 404 was wrong: an old Astro without `base` still "answers" on the port,
+ * while `/__component-preview` 404s — and we never restarted with the correct config.
+ */
+async function isPreviewServerRunning(url: string, basePath = "/") {
   try {
     const response = await fetch(url, { method: "GET" })
-    return response.ok || response.status === 404
+    if (!response.ok) {
+      return false
+    }
+
+    if (basePath === "/") {
+      return true
+    }
+
+    const html = await response.text()
+    const basePrefix = basePath.replace(/\/$/, "")
+    // Confirm assets are prefixed with base (not bare /@vite/client at site root).
+    return html.includes(`${basePrefix}/@vite/`) || html.includes(`"${basePrefix}/`)
   } catch {
     return false
   }
 }
 
-async function clearStaleAstroDevLock(previewDir: string, url: string) {
-  if (await isPreviewServerRunning(url)) {
+async function freePreviewPort(port: number) {
+  if (process.platform === "win32") {
+    return
+  }
+
+  try {
+    await execFileAsync("fuser", ["-k", `${port}/tcp`], {
+      shell: true,
+      windowsHide: true,
+    })
+  } catch {
+    // nothing listening, or fuser unavailable
+  }
+}
+
+async function clearStaleAstroDevLock(previewDir: string, url: string, basePath: string) {
+  if (await isPreviewServerRunning(url, basePath)) {
     return
   }
 
@@ -90,11 +121,11 @@ async function clearStaleAstroDevLock(previewDir: string, url: string) {
   }
 }
 
-async function waitForDevServer(url: string, timeoutMs = 90_000) {
+async function waitForDevServer(url: string, basePath: string, timeoutMs = 90_000) {
   const startedAt = Date.now()
 
   while (Date.now() - startedAt < timeoutMs) {
-    if (await isPreviewServerRunning(url)) {
+    if (await isPreviewServerRunning(url, basePath)) {
       return
     }
 
@@ -120,6 +151,7 @@ export async function stopComponentDevServer() {
 
   if (activeEnv) {
     const previewDir = resolveComponentPreviewDir(activeEnv.COMPONENT_PREVIEW_DIR)
+    const port = activeEnv.COMPONENT_PREVIEW_DEV_PORT
 
     try {
       await execFileAsync("npx", ["astro", "dev", "stop"], {
@@ -130,6 +162,8 @@ export async function stopComponentDevServer() {
     } catch {
       // ignore
     }
+
+    await freePreviewPort(port)
   }
 
   devStatus = "stopped"
@@ -153,17 +187,20 @@ export async function ensureComponentDevServer(env: Env, db: Db) {
     allowedHostsConfig === true ? "true" : allowedHostsConfig.join(",")
 
   if (devStatus === "running" && devProcess) {
-    return { ...getComponentDevServerStatus(), url: publicUrl }
+    if (await isPreviewServerRunning(internalUrl, basePath)) {
+      return { ...getComponentDevServerStatus(), url: publicUrl }
+    }
+    await stopComponentDevServer()
   }
 
-  if (await isPreviewServerRunning(internalUrl)) {
+  if (await isPreviewServerRunning(internalUrl, basePath)) {
     devStatus = "running"
     devError = null
     return { ...getComponentDevServerStatus(), url: publicUrl }
   }
 
   if (devStatus === "starting") {
-    await waitForDevServer(internalUrl)
+    await waitForDevServer(internalUrl, basePath)
     devStatus = "running"
     return { ...getComponentDevServerStatus(), url: publicUrl }
   }
@@ -171,7 +208,10 @@ export async function ensureComponentDevServer(env: Env, db: Db) {
   await ensureComponentPreviewWorkspace(db, env)
   const previewDir = resolveComponentPreviewDir(env.COMPONENT_PREVIEW_DIR)
   await ensureNpmInstall(previewDir)
-  await clearStaleAstroDevLock(previewDir, internalUrl)
+  await clearStaleAstroDevLock(previewDir, internalUrl, basePath)
+  // Drop any stale Astro that answers the port but not the base path
+  await freePreviewPort(port)
+  await new Promise((resolve) => setTimeout(resolve, 400))
 
   devStatus = "starting"
   devError = null
@@ -180,7 +220,6 @@ export async function ensureComponentDevServer(env: Env, db: Db) {
   if (basePath !== "/") {
     devArgs.push("--base", basePath)
   }
-  // Astro CLI / Vite 6: config alone is flaky behind reverse proxies
   if (allowedHostsConfig === true) {
     devArgs.push("--allowed-hosts", "true")
   } else if (allowedHostsConfig.length > 0) {
@@ -199,7 +238,6 @@ export async function ensureComponentDevServer(env: Env, db: Db) {
       ...(allowedHostsEnvValue
         ? {
             COMPONENT_PREVIEW_ALLOWED_HOSTS: allowedHostsEnvValue,
-            // Vite-native escape hatch (works even when vite.server.allowedHosts in config is ignored)
             __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: allowedHostsEnvValue,
           }
         : {}),
@@ -222,7 +260,7 @@ export async function ensureComponentDevServer(env: Env, db: Db) {
   })
 
   try {
-    await waitForDevServer(internalUrl)
+    await waitForDevServer(internalUrl, basePath)
     devStatus = "running"
     devError = null
   } catch (error) {
@@ -241,8 +279,9 @@ export async function ensureComponentDevServer(env: Env, db: Db) {
 async function restartComponentDevServer(env: Env, db: Db) {
   activeEnv = env
   const internalUrl = getInternalProbeUrl(env)
+  const basePath = getComponentPreviewBasePath(env.COMPONENT_PREVIEW_PUBLIC_URL)
 
-  if (!(await isPreviewServerRunning(internalUrl)) && devStatus !== "running" && !devProcess) {
+  if (!(await isPreviewServerRunning(internalUrl, basePath)) && devStatus !== "running" && !devProcess) {
     return ensureComponentDevServer(env, db)
   }
 
