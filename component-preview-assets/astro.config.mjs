@@ -40,15 +40,38 @@ function resolveAllowedHosts() {
 	return [...hosts];
 }
 
+/** @returns {{ host: string, clientPort: number } | null} */
+function resolvePublicHost() {
+	if (!publicUrl) {
+		return null;
+	}
+
+	try {
+		const url = new URL(publicUrl);
+		const clientPort = url.port
+			? Number(url.port)
+			: url.protocol === "https:"
+				? 443
+				: 80;
+		return { host: url.hostname, clientPort };
+	} catch {
+		return null;
+	}
+}
+
 const allowedHosts = resolveAllowedHosts();
+const publicHost = resolvePublicHost();
+const hmrPath = base !== "/" ? base.replace(/\/$/, "") || "/" : undefined;
 
 // Behind https://host/__component-preview:
-// - `base` prefixes asset URLs (/__component-preview/@vite/client)
-// - do NOT set vite.server.origin to the bare hostname — that forces /@vite/client
-//   at the site root, which nginx serves as the CMS SPA (MIME text/html).
-// Prefer also setting __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS / --allowed-hosts from the backend.
+// - `base` prefixes asset URLs
+// - HMR must use the public host + path (not wss://host/ or wss://localhost:port)
+// - do NOT set vite.server.origin to the bare hostname
 export default defineConfig({
 	base,
+	devToolbar: {
+		enabled: false,
+	},
 	...(allowedHosts
 		? {
 				server: {
@@ -63,12 +86,13 @@ export default defineConfig({
 		},
 		server: {
 			...(allowedHosts ? { allowedHosts } : {}),
-			...(publicUrl
+			...(publicHost
 				? {
 						hmr: {
 							protocol: isHttps ? "wss" : "ws",
-							clientPort: isHttps ? 443 : undefined,
-							...(base !== "/" ? { path: base } : {}),
+							host: publicHost.host,
+							clientPort: publicHost.clientPort,
+							...(hmrPath ? { path: hmrPath } : {}),
 						},
 					}
 				: {}),
