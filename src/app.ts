@@ -37,6 +37,7 @@ export async function createApp(env: Env) {
     c.set("db", db)
     await next()
   })
+  
 
   app.get("/health", (c) => c.json({ status: "ok" }))
 
