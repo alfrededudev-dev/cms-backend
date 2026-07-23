@@ -6,6 +6,42 @@ const base = process.env.COMPONENT_PREVIEW_BASE || "/";
 const publicUrl = (process.env.COMPONENT_PREVIEW_PUBLIC_URL || "").replace(/\/$/, "");
 const isHttps = publicUrl.startsWith("https");
 
+/** @returns {true | string[] | undefined} */
+function resolveAllowedHosts() {
+	const raw = process.env.COMPONENT_PREVIEW_ALLOWED_HOSTS?.trim();
+	if (raw === "true" || raw === "*") {
+		return true;
+	}
+
+	/** @type {Set<string>} */
+	const hosts = new Set();
+
+	if (raw) {
+		for (const host of raw.split(",")) {
+			const value = host.trim();
+			if (value) {
+				hosts.add(value);
+			}
+		}
+	}
+
+	if (publicUrl) {
+		try {
+			hosts.add(new URL(publicUrl).hostname);
+		} catch {
+			// ignore invalid public URL
+		}
+	}
+
+	if (hosts.size === 0) {
+		return undefined;
+	}
+
+	return [...hosts];
+}
+
+const allowedHosts = resolveAllowedHosts();
+
 // Behind https://host/__component-preview:
 // - `base` prefixes asset URLs (/__component-preview/@vite/client)
 // - do NOT set vite.server.origin to the bare hostname — that forces /@vite/client
@@ -17,14 +53,19 @@ export default defineConfig({
 		define: {
 			"import.meta.env.CMS_COMPONENT_PREVIEW": JSON.stringify(true),
 		},
-		...(publicUrl
+		...(publicUrl || allowedHosts
 			? {
 					server: {
-						hmr: {
-							protocol: isHttps ? "wss" : "ws",
-							clientPort: isHttps ? 443 : undefined,
-							...(base !== "/" ? { path: base } : {}),
-						},
+						...(allowedHosts ? { allowedHosts } : {}),
+						...(publicUrl
+							? {
+									hmr: {
+										protocol: isHttps ? "wss" : "ws",
+										clientPort: isHttps ? 443 : undefined,
+										...(base !== "/" ? { path: base } : {}),
+									},
+								}
+							: {}),
 					},
 				}
 			: {}),

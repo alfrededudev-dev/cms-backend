@@ -21,6 +21,12 @@ const envSchema = z.object({
   COMPONENT_PREVIEW_DEV_HOST: z.string().default("localhost"),
   /** Browser-facing HTTPS origin/path for preview iframe (e.g. https://cms.example.com/__component-preview). */
   COMPONENT_PREVIEW_PUBLIC_URL: z.string().optional(),
+  /**
+   * Vite allowedHosts for Astro preview.
+   * Comma-separated hostnames, or `true` / `*` to allow all.
+   * Hostname from COMPONENT_PREVIEW_PUBLIC_URL is always included when set.
+   */
+  COMPONENT_PREVIEW_ALLOWED_HOSTS: z.string().optional(),
   ASTRO_STARTER_DIR: z.string().default("../astro-starter"),
   COMPONENT_PREVIEW_ASSETS_DIR: z.string().default("./component-preview-assets"),
   SITE_DEV_PORT_BASE: z.coerce.number().default(4500),

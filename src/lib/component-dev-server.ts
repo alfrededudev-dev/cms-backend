@@ -144,6 +144,7 @@ export async function ensureComponentDevServer(env: Env, db: Db) {
   const port = env.COMPONENT_PREVIEW_DEV_PORT
   const basePath = getComponentPreviewBasePath(env.COMPONENT_PREVIEW_PUBLIC_URL)
   const publicUrlForAstro = env.COMPONENT_PREVIEW_PUBLIC_URL?.trim().replace(/\/$/, "") || ""
+  const allowedHosts = env.COMPONENT_PREVIEW_ALLOWED_HOSTS?.trim() || ""
 
   if (devStatus === "running" && devProcess) {
     return { ...getComponentDevServerStatus(), url: publicUrl }
@@ -183,6 +184,7 @@ export async function ensureComponentDevServer(env: Env, db: Db) {
       ...process.env,
       COMPONENT_PREVIEW_BASE: basePath,
       ...(publicUrlForAstro ? { COMPONENT_PREVIEW_PUBLIC_URL: publicUrlForAstro } : {}),
+      ...(allowedHosts ? { COMPONENT_PREVIEW_ALLOWED_HOSTS: allowedHosts } : {}),
     },
   })
 
