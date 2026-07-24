@@ -1,0 +1,33 @@
+---
+import Layout from "../../../layouts/Layout.astro"
+import {
+  componentModules,
+  getComponentPreviewPaths,
+  variantSlugToFileName,
+} from "../../../lib/component-preview.ts"
+
+export function getStaticPaths() {
+  return getComponentPreviewPaths()
+}
+
+const { component, variant } = Astro.params
+
+if (!component || !variant) {
+  return new Response(`Missing preview route parameters: ${Astro.url.pathname}`, { status: 400 })
+}
+
+const fileName = variantSlugToFileName(variant)
+const loadComponent = componentModules[`../components/blocks/${component}/${fileName}`]
+
+if (!loadComponent) {
+  return new Response(`Component variant not found: ${component}/${fileName}`, { status: 404 })
+}
+
+const componentModule = await loadComponent()
+const Block = componentModule.default
+const props = Astro.props
+---
+
+<Layout title="Preview">
+  <Block {...props} />
+</Layout>

@@ -101,6 +101,43 @@ export function getComponentPreviewPublicOrigin(publicUrl: string | undefined) {
   }
 }
 
+/**
+ * Hostnames Vite/Astro should accept behind nginx.
+ * - `true` / `*` in allowedHostsEnv → allow all
+ * - otherwise merge PUBLIC_URL hostname + comma-separated list
+ */
+export function getComponentPreviewAllowedHosts(
+  publicUrl: string | undefined,
+  allowedHostsEnv: string | undefined,
+): true | string[] {
+  const raw = allowedHostsEnv?.trim()
+  if (raw === "true" || raw === "*") {
+    return true
+  }
+
+  const hosts = new Set<string>()
+
+  if (raw) {
+    for (const host of raw.split(",")) {
+      const value = host.trim()
+      if (value) {
+        hosts.add(value)
+      }
+    }
+  }
+
+  const origin = getComponentPreviewPublicOrigin(publicUrl)
+  if (origin) {
+    try {
+      hosts.add(new URL(origin).hostname)
+    } catch {
+      // ignore
+    }
+  }
+
+  return [...hosts]
+}
+
 /** URL the API uses to probe whether Astro is up (always host:port on the server). */
 export function getComponentPreviewInternalUrl(host: string, port: number, publicUrl?: string) {
   const root = getComponentDevUrl(host, port)
@@ -109,7 +146,8 @@ export function getComponentPreviewInternalUrl(host: string, port: number, publi
     return root
   }
 
-  return `${root}${base.replace(/\/$/, "")}`
+  // Keep trailing slash — Astro with `base` often 404s the path without it.
+  return `${root}${base}`
 }
 
 /** URL the browser/iframe should use (HTTPS public URL when configured). */
